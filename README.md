@@ -15,6 +15,7 @@
 Hugging Face Spaces provides high-performance container hardware on its free tier:
 - **Up to 16 GB to 50 GB RAM** allocated per container (16 GB on CPU Basic, up to 50 GB on ZeroGPU tier)
 - **Up to 2 to 8 vCPUs** dedicated compute
+- **50 GB Temporary Disk Storage** (ephemeral storage for container rootfs and runtime data)
 - **Dynamic ZeroGPU Access** (NVIDIA A10G / L4 GPUs available on demand at no cost)
 
 ### The Problem: The Docker Space Paywall
@@ -166,6 +167,29 @@ Once deployed at `https://<your-space-name>.hf.space`:
 | **`ANY /api/...`** | **Docker App** | Direct forwarding for all API subpaths |
 | **`GET /__status`** | **Supervisor API** | Real-time JSON telemetry, pull status, memory stats, and container logs |
 | **`GET /api/ram`** | **Hardware API** | Total host RAM, free RAM, available cores, and container backend status |
+
+---
+
+## ⏰ Keeping Your Space Always Awake (24/7 Uptime)
+
+Free Hugging Face Spaces will automatically sleep (pause) if they do not receive incoming HTTP requests for an extended period.
+
+To keep your container running **24/7 without shutting down**, set up a free uptime ping service:
+
+1. **Recommended Free Services:**
+   - **[UptimeRobot](https://uptimerobot.com)** (Free 50 monitors, 5-minute pings)
+   - **[Better Stack](https://betterstack.com)** (Free uptime and heartbeat monitoring)
+   - **[cron-job.org](https://cron-job.org)** (Free scheduled web requests)
+2. **Target Ping URL:**
+   ```
+   https://<your-space-name>.hf.space/ping
+   ```
+   *(or `https://<your-space-name>.hf.space/__status`)*
+3. **Interval:** Set the monitor to ping every **5 to 10 minutes** (`HTTP GET`).
+
+As long as regular pings are received, Hugging Face keeps your space active and running.
+
+> **⚠️ Note on Ephemeral Storage:** The container disk provides **50 GB of temporary (ephemeral) storage**. If the space restarts or rebuilds, files stored locally in `/tmp` are reset. For persistent data, connect your app to an external database (e.g. Supabase, Neon, PostgreSQL, MongoDB Atlas, or S3/R2 object storage).
 
 ---
 
