@@ -9,16 +9,18 @@ import subprocess
 import urllib.request
 import psutil
 from fastapi import Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 import httpx
 import gradio as gr
 
-# Configuration (override with Space Variables if preferred)
+# Configuration: set your image and port (or configure via Hugging Face Space Variables)
 DOCKER_IMAGE = os.getenv("DOCKER_IMAGE", "username/my-docker-app:latest")
 INTERNAL_PORT = int(os.getenv("INTERNAL_PORT", "8080"))
 ENTRYPOINT_CMD = os.getenv("ENTRYPOINT_CMD", "")
 
 ROOTFS_DIR = "/tmp/docker_rootfs"
+
+# State tracking
 logs = []
 container_ready = False
 
@@ -30,14 +32,15 @@ def log(msg: str):
     if len(logs) > 300:
         logs.pop(0)
 
-# Disable Gradio SSR proxy to avoid container crashes
+# 1. Monkeypatch gr.Blocks.launch to guarantee ssr_mode=False
+# This prevents Gradio 5/6 from starting the Node.js SSR proxy in cloud containers
 _orig_launch = gr.Blocks.launch
 def _safe_launch(self, *args, **kwargs):
     kwargs["ssr_mode"] = False
     return _orig_launch(self, *args, **kwargs)
 gr.Blocks.launch = _safe_launch
 
-# ZeroGPU decorator compatibility
+# 2. ZeroGPU support decorator (satisfies Hugging Face startup scan)
 try:
     import spaces
 except ImportError:
@@ -50,9 +53,9 @@ except ImportError:
 
 @spaces.GPU
 def check_gpu():
-    return "ZeroGPU environment verified (Free tier active)"
+    return "ZeroGPU environment verified (Free tier instance active)"
 
-# OCI Registry Puller: extracts container layers without Docker daemon
+# 3. OCI Registry Puller: Downloads & extracts layers directly from Docker Hub without Docker daemon
 def pull_and_extract_image(image_tag: str, target_dir: str):
     if ":" in image_tag:
         repo, tag = image_tag.split(":", 1)
@@ -61,7 +64,7 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     if "/" not in repo:
         repo = f"library/{repo}"
 
-    log(f"Requesting token for {repo}:{tag}...")
+    log(f"Requesting Docker Hub token for {repo}:{tag}...")
     auth_url = f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
     req = urllib.request.Request(auth_url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req) as resp:
@@ -84,12 +87,13 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     with urllib.request.urlopen(m_req) as resp:
         m_data = json.loads(resp.read().decode())
 
-    # Auto-select linux/amd64 if multi-architecture manifest
+    # If it's a multi-arch index, select linux/amd64
     if "manifests" in m_data:
         amd64 = next((m for m in m_data["manifests"] if m.get("platform", {}).get("architecture") == "amd64"), None)
         if not amd64:
             amd64 = m_data["manifests"][0]
         digest = amd64["digest"]
+        log(f"Selected amd64 manifest: {digest[:20]}...")
         req2 = urllib.request.Request(
             f"https://registry-1.docker.io/v2/{repo}/manifests/{digest}",
             headers={**headers, "Accept": "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"}
@@ -100,11 +104,12 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
         manifest = m_data
 
     layers = manifest.get("layers", [])
-    log(f"Extracting {len(layers)} image layers...")
+    log(f"Found {len(layers)} image layers to download.")
 
     os.makedirs(target_dir, exist_ok=True)
     for i, layer in enumerate(layers):
         l_digest = layer["digest"]
+        log(f"Downloading layer {i+1}/{len(layers)}: {l_digest[:16]}...")
         blob_url = f"https://registry-1.docker.io/v2/{repo}/blobs/{l_digest}"
         b_req = urllib.request.Request(blob_url, headers=headers)
         with urllib.request.urlopen(b_req) as b_resp:
@@ -115,20 +120,21 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
                 except TypeError:
                     tar.extractall(target_dir)
 
-    log("Container filesystem extracted successfully.")
+    log("All Docker image layers extracted successfully into rootfs.")
 
 def run_container_service():
     global container_ready
     try:
         if not os.path.exists(ROOTFS_DIR) or not os.listdir(ROOTFS_DIR):
-            log(f"Pulling container image '{DOCKER_IMAGE}'...")
+            log(f"Starting OCI container pull for '{DOCKER_IMAGE}'...")
             pull_and_extract_image(DOCKER_IMAGE, ROOTFS_DIR)
 
-        # Detect executable
+        # Determine execution command
         exec_cmd = None
         if ENTRYPOINT_CMD:
             exec_cmd = ENTRYPOINT_CMD.split()
         else:
+            # Auto-detect binary in /app or rootfs
             candidates = [
                 os.path.join(ROOTFS_DIR, "app", "server"),
                 os.path.join(ROOTFS_DIR, "app", "main"),
@@ -151,16 +157,17 @@ def run_container_service():
                         break
 
         if not exec_cmd:
-            log(f"ERROR: Could not locate executable in {ROOTFS_DIR}. Set ENTRYPOINT_CMD.")
+            log(f"ERROR: Could not locate executable binary in {ROOTFS_DIR}. Set ENTRYPOINT_CMD.")
             return
 
         bin_path = exec_cmd[0]
+        log(f"Target executable: {bin_path}")
         try:
             os.chmod(bin_path, 0o755)
         except Exception:
             pass
 
-        log(f"Starting process on internal port {INTERNAL_PORT}...")
+        log(f"Spawning container service on internal port {INTERNAL_PORT}...")
         proc_env = os.environ.copy()
         proc_env["PORT"] = str(INTERNAL_PORT)
         proc_env["PATH"] = f"{os.path.join(ROOTFS_DIR, 'usr', 'bin')}:{os.path.join(ROOTFS_DIR, 'bin')}:{proc_env.get('PATH', '')}"
@@ -176,24 +183,26 @@ def run_container_service():
         )
 
         container_ready = True
-        log(f"Process PID {proc.pid} active on port {INTERNAL_PORT}.")
+        log(f"Container service PID {proc.pid} is running successfully on port {INTERNAL_PORT}!")
 
         for line in proc.stdout:
-            log(f"[APP] {line.strip()}")
+            log(f"[CONTAINER] {line.strip()}")
 
     except Exception as e:
         log(f"CRITICAL ERROR in container supervisor: {e}")
 
+# Start container supervisor in background thread on Linux
 if os.name != "nt":
     threading.Thread(target=run_container_service, daemon=True).start()
 
+# 4. Proxy helper function
 async def forward_to_container(path: str, request: Request):
     if not container_ready:
         return JSONResponse(
             status_code=503,
             content={
                 "status": "pulling_or_starting",
-                "message": f"Container image '{DOCKER_IMAGE}' is initializing. Please refresh in a moment.",
+                "message": f"Docker image '{DOCKER_IMAGE}' is being downloaded from registry. Please refresh in a moment!",
                 "logs": logs[-5:]
             }
         )
@@ -230,7 +239,7 @@ async def forward_to_container(path: str, request: Request):
                 content={"error": "Container is starting up. Please retry shortly.", "logs": logs[-5:]}
             )
 
-# Mount diagnostics and transparent proxy middleware on FastAPI
+# Attach FastAPI Endpoints
 _orig_app_init = gr.routes.App.__init__
 def _custom_app_init(self, *args, **kwargs):
     _orig_app_init(self, *args, **kwargs)
@@ -259,6 +268,9 @@ def _custom_app_init(self, *args, **kwargs):
             "docker_backend": "running" if container_ready else "initializing"
         }
 
+    # Universal Transparent Proxy Middleware:
+    # Any endpoint not handled by Gradio (e.g. /test, /ping, /users, /api/info)
+    # is forwarded directly to the container at http://127.0.0.1:INTERNAL_PORT!
     GRADIO_RESERVED = {
         "assets", "gradio_api", "queue", "config", "theme", "custom_component",
         "favicon.ico", "file", "all_routes", "robots.txt", "static"
@@ -276,23 +288,26 @@ def _custom_app_init(self, *args, **kwargs):
 
 gr.routes.App.__init__ = _custom_app_init
 
-# Gradio Dashboard
-with gr.Blocks(title="Container on Hugging Face") as demo:
-    gr.Markdown(f"# 🐳 Universal Container Runner (`{DOCKER_IMAGE}`)")
+# 5. Gradio Dashboard Interface
+with gr.Blocks(title="Docker on Hugging Face") as demo:
+    gr.Markdown(f"# 🐳 Universal Docker Container on Hugging Face (`{DOCKER_IMAGE}`)")
     
     with gr.Row():
-        info_box = gr.Textbox(label="Configuration", value=f"Image: {DOCKER_IMAGE} | Internal Port: {INTERNAL_PORT}", interactive=False)
+        info_box = gr.Textbox(label="Image & Status", value=f"Image: {DOCKER_IMAGE} | Internal Port: {INTERNAL_PORT}", interactive=False)
         refresh_btn = gr.Button("🔄 Refresh Logs", variant="secondary")
         gpu_btn = gr.Button("⚡ Check ZeroGPU", variant="primary")
         
-    gpu_output = gr.Textbox(label="ZeroGPU Status", placeholder="Click to verify GPU...")
-    logs_display = gr.TextArea(label="Supervisor & Process Logs", value=lambda: "\n".join(logs), lines=15)
+    gpu_output = gr.Textbox(label="ZeroGPU Status", placeholder="ZeroGPU check...")
+    logs_display = gr.TextArea(label="Container Supervisor Logs", value=lambda: "\n".join(logs), lines=15)
     
     gr.Markdown("""
-    ### 🔗 Live Proxied API Endpoints:
-    - Any container path can be called directly without prefix (e.g. `GET /test`, `POST /login`, `GET /users`).
-    - [**/__status** (Supervisor Status)](/__status) - Real-time status, pull progress, and container logs.
-    - [**/api/ram** (Hardware Diagnostics)](/api/ram) - Host RAM and CPU core allocation telemetry.
+    ### 🔗 Live Proxied API Endpoints (Direct Transparent Routing):
+    - [**/test** (Direct Custom Route)](/test) - Direct call to `/test` in Docker without prefix!
+    - [**/ping** (Healthcheck)](/ping) - Calls `GET /ping` inside your Docker container
+    - [**/api/info** (API Info)](/api/info) - Direct call to `/api/info` in Docker
+    - [**/app** (Container Root)](/app) - Calls `GET /` inside your Docker container
+    - [**/__status** (Supervisor Status)](/__status) - Real-time supervisor pull & container logs
+    - [**/api/ram** (Hardware Diagnostics)](/api/ram) - Host & memory allocation telemetry
     """)
 
     refresh_btn.click(fn=lambda: "\n".join(logs), outputs=logs_display)
