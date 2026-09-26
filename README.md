@@ -11,11 +11,11 @@
 
 ## 💡 Why This Repository Exists
 
-### The Opportunity: Unmatched Free Cloud Hardware
-Hugging Face offers one of the most generous free computing tiers in the AI ecosystem:
-- **16 GB to 24 GB+ Dedicated RAM** (running on massive 2 TB host memory nodes)
-- **192 vCPU Host Compute Pool**
-- **Dynamic NVIDIA ZeroGPU Access** (NVIDIA A10G / L4 / H100 access at zero cost)
+### The Opportunity: Generous Free Cloud Compute
+Hugging Face Spaces provides high-performance container hardware on its free tier:
+- **Up to 16 GB to 50 GB RAM** allocated per container (16 GB on CPU Basic, up to 50 GB on ZeroGPU tier)
+- **Up to 2 to 8 vCPUs** dedicated compute
+- **Dynamic ZeroGPU Access** (NVIDIA A10G / L4 GPUs available on demand at no cost)
 
 ### The Problem: The Docker Space Paywall
 Hugging Face officially offers a Docker Space SDK (`sdk: docker`). However, native Docker Spaces are **locked behind a paid PRO subscription** ($9/month minimum). If you attempt to create or deploy a Docker Space on the free tier, the API rejects it with:
