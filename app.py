@@ -1,3 +1,17 @@
+"""
+================================================================================
+🚀 UNIVERSAL DOCKER RUNNER FOR FREE HUGGING FACE SPACES
+================================================================================
+Run ANY Docker container (Go, Node.js, Python, Rust, C++, Java, etc.) completely FREE
+on Hugging Face Spaces using the ZeroGPU free tier (16 GB - 2 TB RAM allocation).
+
+INSTRUCTIONS FOR DEVELOPERS:
+1. Copy this app.py and requirements.txt to your Hugging Face Space.
+2. Set DOCKER_IMAGE and INTERNAL_PORT below (or via Space Settings -> Variables).
+3. Commit and push to Hugging Face!
+================================================================================
+"""
+
 import os
 import sys
 import io
@@ -14,17 +28,19 @@ import httpx
 import gradio as gr
 
 # ==============================================================================
-# CONFIGURATION
+# ⚙️ CONFIGURATION: SET YOUR DOCKER IMAGE & PORT HERE
 # ==============================================================================
-# Set your public Docker Hub image here (e.g. "gojo16s/hf-go-api:latest")
-DOCKER_IMAGE = os.getenv("DOCKER_IMAGE", "gojo16s/hf-go-api:latest")
+# 1. Target Docker image on Docker Hub or GHCR (must be public):
+DOCKER_IMAGE = os.getenv("DOCKER_IMAGE", "username/my-docker-app:latest")
 
-# The internal port your container listens on (e.g. 8080 or 3000)
+# 2. The internal port your application inside the container listens on:
 INTERNAL_PORT = int(os.getenv("INTERNAL_PORT", "8080"))
 
-# Optional custom command to run inside rootfs (e.g. "node /app/server.js")
-# If left empty, it auto-detects binary in /app or image entrypoint
+# 3. (Optional) Custom command to run inside the extracted filesystem.
+#    Examples: "node /app/server.js", "python /app/main.py", "/app/server"
+#    Leave empty ("") to auto-detect the executable in /app or image rootfs:
 ENTRYPOINT_CMD = os.getenv("ENTRYPOINT_CMD", "")
+# ==============================================================================
 
 ROOTFS_DIR = "/tmp/docker_rootfs"
 
@@ -41,6 +57,7 @@ def log(msg: str):
         logs.pop(0)
 
 # 1. Monkeypatch gr.Blocks.launch to guarantee ssr_mode=False
+# This prevents Gradio 5/6 from starting the Node.js SSR proxy in cloud containers
 _orig_launch = gr.Blocks.launch
 def _safe_launch(self, *args, **kwargs):
     kwargs["ssr_mode"] = False
@@ -60,9 +77,9 @@ except ImportError:
 
 @spaces.GPU
 def check_gpu():
-    return "ZeroGPU environment verified"
+    return "ZeroGPU environment verified (Free tier instance active)"
 
-# 3. Registry Puller: Pulls & extracts OCI image directly from Docker Hub
+# 3. OCI Registry Puller: Downloads & extracts layers directly from Docker Hub without Docker daemon
 def pull_and_extract_image(image_tag: str, target_dir: str):
     if ":" in image_tag:
         repo, tag = image_tag.split(":", 1)
@@ -71,7 +88,7 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     if "/" not in repo:
         repo = f"library/{repo}"
 
-    log(f"Requesting Docker auth token for {repo}:{tag}...")
+    log(f"Requesting Docker Hub token for {repo}:{tag}...")
     auth_url = f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
     req = urllib.request.Request(auth_url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req) as resp:
@@ -94,7 +111,7 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     with urllib.request.urlopen(m_req) as resp:
         m_data = json.loads(resp.read().decode())
 
-    # Resolve multi-arch index to linux/amd64
+    # If it's a multi-arch index, select linux/amd64
     if "manifests" in m_data:
         amd64 = next((m for m in m_data["manifests"] if m.get("platform", {}).get("architecture") == "amd64"), None)
         if not amd64:
@@ -127,13 +144,13 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
                 except TypeError:
                     tar.extractall(target_dir)
 
-    log("All Docker image layers extracted successfully.")
+    log("All Docker image layers extracted successfully into rootfs.")
 
 def run_container_service():
     global container_ready
     try:
         if not os.path.exists(ROOTFS_DIR) or not os.listdir(ROOTFS_DIR):
-            log(f"Starting OCI container pull for {DOCKER_IMAGE}...")
+            log(f"Starting OCI container pull for '{DOCKER_IMAGE}'...")
             pull_and_extract_image(DOCKER_IMAGE, ROOTFS_DIR)
 
         # Determine execution command
@@ -153,17 +170,18 @@ def run_container_service():
                     break
             
             if not exec_cmd:
-                for root, _, files in os.walk(os.path.join(ROOTFS_DIR, "app") if os.path.exists(os.path.join(ROOTFS_DIR, "app")) else ROOTFS_DIR):
+                search_dir = os.path.join(ROOTFS_DIR, "app") if os.path.exists(os.path.join(ROOTFS_DIR, "app")) else ROOTFS_DIR
+                for root, _, files in os.walk(search_dir):
                     for f in files:
                         p = os.path.join(root, f)
-                        if os.access(p, os.X_OK) and not f.endswith((".sh", ".so", ".a")):
+                        if os.access(p, os.X_OK) and not f.endswith((".sh", ".so", ".a", ".pyc")):
                             exec_cmd = [p]
                             break
                     if exec_cmd:
                         break
 
         if not exec_cmd:
-            log(f"ERROR: Could not locate executable binary in {ROOTFS_DIR}. Please specify ENTRYPOINT_CMD.")
+            log(f"ERROR: Could not locate executable binary in {ROOTFS_DIR}. Set ENTRYPOINT_CMD.")
             return
 
         bin_path = exec_cmd[0]
@@ -189,7 +207,7 @@ def run_container_service():
         )
 
         container_ready = True
-        log(f"Container service PID {proc.pid} is running successfully on internal port {INTERNAL_PORT}!")
+        log(f"Container service PID {proc.pid} is running successfully on port {INTERNAL_PORT}!")
 
         for line in proc.stdout:
             log(f"[CONTAINER] {line.strip()}")
@@ -212,6 +230,12 @@ async def forward_to_container(path: str, request: Request):
                 "logs": logs[-5:]
             }
         )
+    path = path.lstrip("/")
+    if path.startswith("app/"):
+        path = path[4:]
+    elif path == "app":
+        path = ""
+
     target_url = f"http://127.0.0.1:{INTERNAL_PORT}/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
@@ -268,22 +292,23 @@ def _custom_app_init(self, *args, **kwargs):
             "docker_backend": "running" if container_ready else "initializing"
         }
 
-    # Universal proxied endpoints
-    @self.api_route("/ping", methods=["GET", "POST", "PUT", "DELETE"])
-    async def proxy_ping(request: Request):
-        return await forward_to_container("ping", request)
+    # Universal Transparent Proxy Middleware:
+    # Any endpoint not handled by Gradio (e.g. /test, /ping, /users, /api/info)
+    # is forwarded directly to the container at http://127.0.0.1:INTERNAL_PORT!
+    GRADIO_RESERVED = {
+        "assets", "gradio_api", "queue", "config", "theme", "custom_component",
+        "favicon.ico", "file", "all_routes", "robots.txt", "static"
+    }
 
-    @self.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-    async def proxy_api(request: Request, path: str = ""):
-        return await forward_to_container(f"api/{path}", request)
-
-    @self.api_route("/app/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-    async def proxy_app_path(request: Request, path: str = ""):
-        return await forward_to_container(path, request)
-
-    @self.api_route("/app", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-    async def proxy_app_root(request: Request):
-        return await forward_to_container("", request)
+    @self.middleware("http")
+    async def transparent_docker_proxy(request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code == 404:
+            raw_path = request.url.path.lstrip("/")
+            first_segment = raw_path.split("/")[0] if raw_path else ""
+            if first_segment not in GRADIO_RESERVED:
+                return await forward_to_container(raw_path, request)
+        return response
 
 gr.routes.App.__init__ = _custom_app_init
 
@@ -300,10 +325,11 @@ with gr.Blocks(title="Docker on Hugging Face") as demo:
     logs_display = gr.TextArea(label="Container Supervisor Logs", value=lambda: "\n".join(logs), lines=15)
     
     gr.Markdown("""
-    ### 🔗 Live Proxied API Endpoints:
-    - [**/app** (Container Root)](/app) - Calls `GET /` inside your Docker container
+    ### 🔗 Live Proxied API Endpoints (Direct Transparent Routing):
+    - [**/test** (Direct Custom Route)](/test) - Direct call to `/test` in Docker without prefix!
     - [**/ping** (Healthcheck)](/ping) - Calls `GET /ping` inside your Docker container
-    - [**/api/...** (API Routes)](/api/info) - Forwards any `/api/*` call to your container
+    - [**/api/info** (API Info)](/api/info) - Direct call to `/api/info` in Docker
+    - [**/app** (Container Root)](/app) - Calls `GET /` inside your Docker container
     - [**/__status** (Supervisor Status)](/__status) - Real-time supervisor pull & container logs
     - [**/api/ram** (Hardware Diagnostics)](/api/ram) - Host & memory allocation telemetry
     """)
