@@ -145,17 +145,7 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     except Exception:
         pass
 
-def ensure_proot():
-    proot_path = "/tmp/proot"
-    if not os.path.exists(proot_path) or os.path.getsize(proot_path) == 0:
-        log("Downloading user-space container runtime (PRoot)...")
-        url = "https://proot.gitlab.io/proot/bin/proot"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req) as resp, open(proot_path, "wb") as f:
-            f.write(resp.read())
-        os.chmod(proot_path, 0o755)
-        log("PRoot container runtime ready.")
-    return proot_path
+    log("All Docker image layers extracted successfully into rootfs.")
 
 def run_container_service():
     global container_ready
@@ -201,32 +191,15 @@ def run_container_service():
         except Exception:
             pass
 
-        proot_bin = ensure_proot()
-        rel_cmd = os.path.relpath(bin_path, ROOTFS_DIR).replace("\\", "/")
-        if not rel_cmd.startswith("/"):
-            rel_cmd = "/" + rel_cmd
-
-        exec_cmd = [
-            proot_bin,
-            "-r", ROOTFS_DIR,
-            "-b", "/dev",
-            "-b", "/proc",
-            "-b", "/sys",
-            "-w", os.path.dirname(rel_cmd) if os.path.dirname(rel_cmd) else "/",
-            rel_cmd
-        ]
-
-        log(f"Spawning container service via PRoot: {' '.join(exec_cmd)}")
+        log(f"Spawning container service on internal port {INTERNAL_PORT}...")
         proc_env = os.environ.copy()
         proc_env["PORT"] = str(INTERNAL_PORT)
-        proc_env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-        proc_env["LD_LIBRARY_PATH"] = "/usr/lib:/lib:/usr/local/lib:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
-        proc_env["ONNX_LIB_PATH"] = "/usr/lib/libonnxruntime.so"
-        proc_env["MODEL_PATH"] = "/app/model.onnx"
+        proc_env["PATH"] = f"{os.path.join(ROOTFS_DIR, 'usr', 'bin')}:{os.path.join(ROOTFS_DIR, 'bin')}:{proc_env.get('PATH', '')}"
 
         proc = subprocess.Popen(
             exec_cmd,
             env=proc_env,
+            cwd=os.path.dirname(bin_path) if os.path.exists(os.path.dirname(bin_path)) else ROOTFS_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

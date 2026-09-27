@@ -6,6 +6,11 @@
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-yellow)](https://huggingface.co/spaces)
 [![Docker](https://img.shields.io/badge/Docker-OCI%20v2-2496ED?logo=docker&logoColor=white)](https://hub.docker.com)
 [![ZeroGPU Ready](https://img.shields.io/badge/ZeroGPU-16GB%2B%20RAM-success)](https://huggingface.co/docs/hub/spaces-gpus)
+[![Deployment Rules](https://img.shields.io/badge/Rules-Must%20Read-red)](rules.md)
+
+> [!IMPORTANT]
+> **Before deploying, please review the [Deployment Rules & Safety Guidelines](rules.md).**  
+> Learn how to prevent automated account lockouts, why external binary downloads are prohibited, and critical differences between **Public** vs. **Private** Spaces (including why Private Spaces cannot be called directly from frontend browsers).
 
 ---
 
@@ -203,6 +208,15 @@ httpx
 psutil
 spaces
 ```
+
+---
+
+## 📜 Deployment Rules & Safety Guidelines
+
+Make sure to read the full [Rules & Guidelines (rules.md)](rules.md) before deploying your service:
+- **Avoid Platform Bans:** Why downloading external runtime tools/binaries at boot triggers automated account lockouts.
+- **Frontend / Browser Limitation:** Why Private Spaces require Bearer tokens and cannot be directly called from browser JavaScript (`fetch()`), and how to properly proxy private spaces through a backend.
+- **Content Policy:** Requirements for testing content moderation or NSFW filtering models safely.
 
 ---
 
