@@ -7,6 +7,7 @@ import tarfile
 import threading
 import subprocess
 import urllib.request
+import shutil
 import psutil
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -103,10 +104,28 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     else:
         manifest = m_data
 
+    target_digest = digest if "manifests" in m_data else m_data.get("config", {}).get("digest", "")
+    digest_file = os.path.join(target_dir, ".image_digest")
+    current_digest = ""
+    if os.path.exists(digest_file):
+        try:
+            with open(digest_file, "r") as f:
+                current_digest = f.read().strip()
+        except Exception:
+            pass
+
+    if current_digest == target_digest and os.path.exists(target_dir) and os.listdir(target_dir):
+        log(f"Cached image rootfs matches manifest digest ({target_digest[:16]}...). Skipping download.")
+        return
+
+    log(f"New or changed container image detected ({current_digest[:12]} -> {target_digest[:12]}). Pulling fresh layers...")
+    if os.path.exists(target_dir):
+        shutil.rmtree(target_dir, ignore_errors=True)
+    os.makedirs(target_dir, exist_ok=True)
+
     layers = manifest.get("layers", [])
     log(f"Found {len(layers)} image layers to download.")
 
-    os.makedirs(target_dir, exist_ok=True)
     for i, layer in enumerate(layers):
         l_digest = layer["digest"]
         log(f"Downloading layer {i+1}/{len(layers)}: {l_digest[:16]}...")
@@ -120,14 +139,19 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
                 except TypeError:
                     tar.extractall(target_dir)
 
+    try:
+        with open(digest_file, "w") as f:
+            f.write(target_digest)
+    except Exception:
+        pass
+
     log("All Docker image layers extracted successfully into rootfs.")
 
 def run_container_service():
     global container_ready
     try:
-        if not os.path.exists(ROOTFS_DIR) or not os.listdir(ROOTFS_DIR):
-            log(f"Starting OCI container pull for '{DOCKER_IMAGE}'...")
-            pull_and_extract_image(DOCKER_IMAGE, ROOTFS_DIR)
+        log(f"Checking OCI container image '{DOCKER_IMAGE}'...")
+        pull_and_extract_image(DOCKER_IMAGE, ROOTFS_DIR)
 
         # Determine execution command
         exec_cmd = None
