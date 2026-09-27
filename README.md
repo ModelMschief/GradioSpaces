@@ -1,6 +1,6 @@
-# 🐳 GradioSpaces: Universal Docker Runner on Free Hugging Face Spaces
+# 🐳 GradioSpaces: Daemonless Docker Runner on Free Hugging Face Spaces
 
-> **Run ANY Docker container (Go, Node.js, Rust, Python, C++, Java, etc.) completely FREE on Hugging Face Spaces with 16 GB+ RAM and ZeroGPU.**
+> **Run application processes from ANY Docker/OCI image (Go, Node.js, Rust, Python, C++, Java, etc.) completely FREE on Hugging Face Spaces without a Docker daemon.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-yellow)](https://huggingface.co/spaces)
@@ -33,7 +33,7 @@ Free tier users are restricted to **Gradio** or **Streamlit** SDKs, which are tr
 ### The Breakthrough
 **GradioSpaces removes this limitation entirely.** 
 
-By leveraging an unprivileged user-space OCI layer puller and a transparent FastAPI reverse proxy, this project allows you to package your real backend applications in **any language** inside a standard public Docker image and run them directly inside a 100% free Hugging Face Gradio Space.
+By leveraging an unprivileged user-space OCI layer puller and a transparent FastAPI reverse proxy, this project acts as a **daemonless runner**: it pulls public Docker/OCI images, unpacks their rootfs, and executes their application processes natively inside a 100% free Hugging Face Gradio Space—no Docker daemon (`dockerd`) or container runtime required.
 
 ---
 
@@ -41,11 +41,11 @@ By leveraging an unprivileged user-space OCI layer puller and a transparent Fast
 
 | Hugging Face Constraint | Why It Happens | How We Solved It in `app.py` |
 | :--- | :--- | :--- |
-| **No Docker Daemon (`dockerd`)** | Free Spaces run inside locked-down, unprivileged Kubernetes pods without `/var/run/docker.sock`. Running `docker run` is impossible. | **Daemonless OCI v2 Puller:** Queries the Docker Hub / GHCR v2 registry API, downloads the `linux/amd64` layer blobs over HTTPS, and unpacks them directly into `/tmp/docker_rootfs` using pure Python `tarfile`. |
+| **No Docker Daemon (`dockerd`)** | Free Spaces run inside locked-down, unprivileged Kubernetes pods without `/var/run/docker.sock`. Running `docker run` is impossible. | **Daemonless OCI v2 Puller:** Queries the Docker Hub / GHCR v2 registry API, downloads the `linux/amd64` layer blobs over HTTPS, and unpacks them directly into `/tmp/docker_rootfs` using pure Python `tarfile`. The application process is then executed natively via standard process execution without requiring `dockerd` or a container engine. |
 | **Gradio 5/6 SSR Process Crash** | Newer Gradio versions spawn an internal Node.js Server-Side Rendering (SSR) proxy that hangs or crashes in cloud containers (`Stopping Node.js server...`). | **SSR Bypass Monkeypatch:** Automatically patches `gr.Blocks.launch` at runtime to force `ssr_mode = False`. |
 | **ZeroGPU Supervisor Abort** | ZeroGPU environments verify that the space is an authentic GPU application during startup. If no `@spaces.GPU` decorator is detected in the AST, the container terminates. | **ZeroGPU AST Probe:** Injects a lightweight `@spaces.GPU` handler that satisfies the platform supervisor check. |
-| **Port 7860 Isolation** | Hugging Face exclusively exposes public traffic on port `7860`. Containers listening on port `8080`, `3000`, etc. are inaccessible from outside. | **Transparent Reverse Proxy Middleware:** Intercepts traffic on port `7860` and forwards requests to `http://127.0.0.1:INTERNAL_PORT` using high-performance asynchronous `httpx`. |
-| **Prefix-Free URL Routing** | Gradio natively captures routes or throws 404 for arbitrary endpoints like `/test`, `/login`, or `/users`. | **HTTP 404 Fallback Proxy:** Any route that is not a Gradio internal asset (`/assets`, `/gradio_api`) is automatically forwarded to the Docker container untouched. Calling `{base_url}/test` hits `/test` directly on your container! |
+| **Port 7860 Isolation** | Hugging Face exclusively exposes public traffic on port `7860`. Services listening on internal port `8080`, `3000`, etc. are inaccessible from outside. | **Transparent Reverse Proxy Middleware:** Intercepts traffic on port `7860` and forwards requests to `http://127.0.0.1:INTERNAL_PORT` using high-performance asynchronous `httpx`. |
+| **Prefix-Free URL Routing** | Gradio natively captures routes or throws 404 for arbitrary endpoints like `/test`, `/login`, or `/users`. | **HTTP 404 Fallback Proxy:** Any route that is not a Gradio internal asset (`/assets`, `/gradio_api`) is automatically forwarded to your application process untouched. Calling `{base_url}/test` hits `/test` directly on your backend service! |
 
 ---
 
@@ -179,7 +179,7 @@ Once deployed at `https://<your-space-name>.hf.space`:
 
 Free Hugging Face Spaces will automatically sleep (pause) if they do not receive incoming HTTP requests for an extended period.
 
-To keep your container running **24/7 without shutting down**, set up a free uptime ping service:
+To keep your application process running **24/7 without shutting down**, set up a free uptime ping service:
 
 1. **Recommended Free Services:**
    - **[UptimeRobot](https://uptimerobot.com)** (Free 50 monitors, 5-minute pings)
