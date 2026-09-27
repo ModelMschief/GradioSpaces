@@ -145,7 +145,17 @@ def pull_and_extract_image(image_tag: str, target_dir: str):
     except Exception:
         pass
 
-    log("All Docker image layers extracted successfully into rootfs.")
+def ensure_proot():
+    proot_path = "/tmp/proot"
+    if not os.path.exists(proot_path) or os.path.getsize(proot_path) == 0:
+        log("Downloading user-space container runtime (PRoot)...")
+        url = "https://proot.gitlab.io/proot/bin/proot"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp, open(proot_path, "wb") as f:
+            f.write(resp.read())
+        os.chmod(proot_path, 0o755)
+        log("PRoot container runtime ready.")
+    return proot_path
 
 def run_container_service():
     global container_ready
@@ -191,42 +201,32 @@ def run_container_service():
         except Exception:
             pass
 
-        log(f"Spawning container service on internal port {INTERNAL_PORT}...")
+        proot_bin = ensure_proot()
+        rel_cmd = os.path.relpath(bin_path, ROOTFS_DIR).replace("\\", "/")
+        if not rel_cmd.startswith("/"):
+            rel_cmd = "/" + rel_cmd
+
+        exec_cmd = [
+            proot_bin,
+            "-r", ROOTFS_DIR,
+            "-b", "/dev",
+            "-b", "/proc",
+            "-b", "/sys",
+            "-w", os.path.dirname(rel_cmd) if os.path.dirname(rel_cmd) else "/",
+            rel_cmd
+        ]
+
+        log(f"Spawning container service via PRoot: {' '.join(exec_cmd)}")
         proc_env = os.environ.copy()
         proc_env["PORT"] = str(INTERNAL_PORT)
-        proc_env["PATH"] = f"{os.path.join(ROOTFS_DIR, 'usr', 'bin')}:{os.path.join(ROOTFS_DIR, 'bin')}:{proc_env.get('PATH', '')}"
-
-        lib_dirs = [
-            os.path.join(ROOTFS_DIR, "usr", "lib"),
-            os.path.join(ROOTFS_DIR, "lib"),
-            os.path.join(ROOTFS_DIR, "usr", "local", "lib"),
-            os.path.join(ROOTFS_DIR, "usr", "lib", "x86_64-linux-gnu"),
-            os.path.join(ROOTFS_DIR, "lib", "x86_64-linux-gnu"),
-        ]
-        proc_env["LD_LIBRARY_PATH"] = ":".join(lib_dirs) + ":" + proc_env.get("LD_LIBRARY_PATH", "")
-
-        # Look for ONNX runtime shared library in extracted rootfs
-        for cand in [
-            os.path.join(ROOTFS_DIR, "usr", "lib", "libonnxruntime.so"),
-            os.path.join(ROOTFS_DIR, "usr", "lib", "libonnxruntime.so.1"),
-            os.path.join(ROOTFS_DIR, "usr", "lib", "libonnxruntime.so.1.22.0"),
-            os.path.join(ROOTFS_DIR, "lib", "libonnxruntime.so"),
-        ]:
-            if os.path.exists(cand):
-                proc_env["ONNX_LIB_PATH"] = cand
-                log(f"Found ONNX Runtime shared library: {cand}")
-                break
-
-        # Also search for model.onnx if located in rootfs /app
-        model_cand = os.path.join(ROOTFS_DIR, "app", "model.onnx")
-        if os.path.exists(model_cand):
-            proc_env["MODEL_PATH"] = model_cand
-            log(f"Found ONNX model: {model_cand}")
+        proc_env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        proc_env["LD_LIBRARY_PATH"] = "/usr/lib:/lib:/usr/local/lib:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
+        proc_env["ONNX_LIB_PATH"] = "/usr/lib/libonnxruntime.so"
+        proc_env["MODEL_PATH"] = "/app/model.onnx"
 
         proc = subprocess.Popen(
             exec_cmd,
             env=proc_env,
-            cwd=os.path.dirname(bin_path) if os.path.exists(os.path.dirname(bin_path)) else ROOTFS_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
