@@ -172,6 +172,33 @@ def run_container_service():
         proc_env["PORT"] = str(INTERNAL_PORT)
         proc_env["PATH"] = f"{os.path.join(ROOTFS_DIR, 'usr', 'bin')}:{os.path.join(ROOTFS_DIR, 'bin')}:{proc_env.get('PATH', '')}"
 
+        lib_dirs = [
+            os.path.join(ROOTFS_DIR, "usr", "lib"),
+            os.path.join(ROOTFS_DIR, "lib"),
+            os.path.join(ROOTFS_DIR, "usr", "local", "lib"),
+            os.path.join(ROOTFS_DIR, "usr", "lib", "x86_64-linux-gnu"),
+            os.path.join(ROOTFS_DIR, "lib", "x86_64-linux-gnu"),
+        ]
+        proc_env["LD_LIBRARY_PATH"] = ":".join(lib_dirs) + ":" + proc_env.get("LD_LIBRARY_PATH", "")
+
+        # Look for ONNX runtime shared library in extracted rootfs
+        for cand in [
+            os.path.join(ROOTFS_DIR, "usr", "lib", "libonnxruntime.so"),
+            os.path.join(ROOTFS_DIR, "usr", "lib", "libonnxruntime.so.1"),
+            os.path.join(ROOTFS_DIR, "usr", "lib", "libonnxruntime.so.1.22.0"),
+            os.path.join(ROOTFS_DIR, "lib", "libonnxruntime.so"),
+        ]:
+            if os.path.exists(cand):
+                proc_env["ONNX_LIB_PATH"] = cand
+                log(f"Found ONNX Runtime shared library: {cand}")
+                break
+
+        # Also search for model.onnx if located in rootfs /app
+        model_cand = os.path.join(ROOTFS_DIR, "app", "model.onnx")
+        if os.path.exists(model_cand):
+            proc_env["MODEL_PATH"] = model_cand
+            log(f"Found ONNX model: {model_cand}")
+
         proc = subprocess.Popen(
             exec_cmd,
             env=proc_env,
