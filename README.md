@@ -15,80 +15,6 @@
 
 ---
 
-## 💡 Why This Repository Exists
-
-### The Opportunity: Generous Free Cloud Compute
-Hugging Face Spaces provides high-performance container hardware on its free tier:
-- **Up to 16 GB to 50 GB RAM** allocated per container (16 GB on CPU Basic, up to 50 GB on ZeroGPU tier)
-- **Up to 2 to 8 vCPUs** dedicated compute
-- **50 GB Temporary Disk Storage** (ephemeral storage for container rootfs and runtime data)
-- **Dynamic ZeroGPU Access** (NVIDIA A10G / L4 GPUs available on demand at no cost)
-
-### The Problem: The Docker Space Paywall
-Hugging Face officially offers a Docker Space SDK (`sdk: docker`). However, native Docker Spaces are **locked behind a paid PRO subscription** ($9/month minimum). If you attempt to create or deploy a Docker Space on the free tier, the API rejects it with:
-```
-402 Payment Required: Docker spaces require a Pro subscription
-```
-Free tier users are restricted to **Gradio** or **Streamlit** SDKs, which are traditionally designed to only run single-file Python UI demos.
-
-### The Breakthrough
-**GradioSpaces removes this limitation entirely.** 
-
-By leveraging an unprivileged user-space OCI layer puller and a transparent FastAPI reverse proxy, this project acts as a **daemonless runner**: it pulls public Docker/OCI images, unpacks their rootfs, and executes their application processes natively inside a 100% free Hugging Face Gradio Space—no Docker daemon (`dockerd`) or container runtime required.
-
----
-
-## 🧠 Gradio & HF Constraints: How We Solved Them
-
-| Hugging Face Constraint | Why It Happens | How We Solved It in `app.py` |
-| :--- | :--- | :--- |
-| **No Docker Daemon (`dockerd`)** | Free Spaces run inside locked-down, unprivileged Kubernetes pods without `/var/run/docker.sock`. Running `docker run` is impossible. | **Daemonless OCI v2 Puller:** Queries the Docker Hub / GHCR v2 registry API, downloads the `linux/amd64` layer blobs over HTTPS, and unpacks them directly into `/tmp/docker_rootfs` using pure Python `tarfile`. The application process is then executed natively via standard process execution without requiring `dockerd` or a container engine. |
-| **Gradio 5/6 SSR Process Crash** | Newer Gradio versions spawn an internal Node.js Server-Side Rendering (SSR) proxy that hangs or crashes in cloud containers (`Stopping Node.js server...`). | **SSR Bypass Monkeypatch:** Automatically patches `gr.Blocks.launch` at runtime to force `ssr_mode = False`. |
-| **ZeroGPU Supervisor Abort** | ZeroGPU environments verify that the space is an authentic GPU application during startup. If no `@spaces.GPU` decorator is detected in the AST, the container terminates. | **ZeroGPU AST Probe:** Injects a lightweight `@spaces.GPU` handler that satisfies the platform supervisor check. |
-| **Port 7860 Isolation** | Hugging Face exclusively exposes public traffic on port `7860`. Services listening on internal port `8080`, `3000`, etc. are inaccessible from outside. | **Transparent Reverse Proxy Middleware:** Intercepts traffic on port `7860` and forwards requests to `http://127.0.0.1:INTERNAL_PORT` using high-performance asynchronous `httpx`. |
-| **Prefix-Free URL Routing** | Gradio natively captures routes or throws 404 for arbitrary endpoints like `/test`, `/login`, or `/users`. | **HTTP 404 Fallback Proxy:** Any route that is not a Gradio internal asset (`/assets`, `/gradio_api`) is automatically forwarded to your application process untouched. Calling `{base_url}/test` hits `/test` directly on your backend service! |
-
----
-
-## 🏗️ Architecture
-
-```mermaid
-flowchart TD
-    subgraph Internet
-        User[External Client / Frontend]
-    end
-
-    subgraph HuggingFaceSpace ["Hugging Face Space (Free ZeroGPU Tier: 16GB RAM)"]
-        Ingress["HF Ingress Port :7860"]
-        
-        subgraph PythonSupervisor ["Python Supervisor (app.py)"]
-            FastAPI["FastAPI + Transparent Proxy Middleware"]
-            OCIPuller["OCI v2 Layer Puller"]
-            GradioUI["Gradio Logs Dashboard (/)"]
-        end
-
-        subgraph ContainerEnv ["Extracted Container Rootfs (/tmp/docker_rootfs)"]
-            AppProcess["Your Containerized Application Process\n(Go / Node.js / Rust / Python / C++)"]
-        end
-    end
-
-    subgraph Registries ["Public OCI Registry"]
-        DockerHub["Docker Hub / GHCR"]
-    end
-
-    User -->|GET /test, POST /api/data| Ingress
-    Ingress --> FastAPI
-    
-    FastAPI -->|If Gradio asset or /| GradioUI
-    FastAPI -->|All other routes: /test, /ping, /api/*| AppProcess
-    
-    OCIPuller -->|Startup: Download & extract layers| DockerHub
-    OCIPuller -.->|Unpack rootfs| ContainerEnv
-    AppProcess -.->|Listens on 127.0.0.1:8080| FastAPI
-```
-
----
-
 ## 🚀 Setup Guide (5 Minutes)
 
 You can run an application written in **any programming language**.
@@ -166,6 +92,16 @@ That's it! Hugging Face will start `app.py`, which pulls your image layers, extr
 
 ---
 
+## 📜 Deployment Rules & Safety Guidelines
+
+Make sure to review the full [Rules & Guidelines (rules.md)](rules.md) before deploying your service:
+- **Free Account Eligibility (30-Day Rule):** Personal accounts must have a verified email and be older than 30 days to deploy free Gradio/ZeroGPU compute spaces.
+- **Avoid Platform Bans:** Never download external runtime tools or sandboxing shims (e.g. `proot`) during boot—this trips automated heuristic abuse flags. Bake all binaries directly into your Docker image.
+- **Frontend / Browser Limitation:** Public Spaces allow direct browser `fetch()` calls. Private Spaces require Hugging Face Bearer tokens and **cannot be called directly from browser JavaScript** without exposing secrets or failing preflight CORS; proxy private spaces through a backend server instead.
+- **Content Policy:** Requirements for testing content moderation or NSFW filtering models safely.
+
+---
+
 ## 📡 Live Endpoints
 
 Once deployed at `https://<your-space-name>.hf.space`:
@@ -203,6 +139,80 @@ As long as regular pings are received, Hugging Face keeps your space active and 
 
 ---
 
+## 💡 Why This Repository Exists
+
+### The Opportunity: Generous Free Cloud Compute
+Hugging Face Spaces provides high-performance container hardware on its free tier:
+- **Up to 16 GB to 50 GB RAM** allocated per container (16 GB on CPU Basic, up to 50 GB on ZeroGPU tier)
+- **Up to 2 to 8 vCPUs** dedicated compute
+- **50 GB Temporary Disk Storage** (ephemeral storage for container rootfs and runtime data)
+- **Dynamic ZeroGPU Access** (NVIDIA A10G / L4 GPUs available on demand at no cost)
+
+### The Problem: The Docker Space Paywall
+Hugging Face officially offers a Docker Space SDK (`sdk: docker`). However, native Docker Spaces are **locked behind a paid PRO subscription** ($9/month minimum). If you attempt to create or deploy a Docker Space on the free tier, the API rejects it with:
+```
+402 Payment Required: Docker spaces require a Pro subscription
+```
+Free tier users are restricted to **Gradio** or **Streamlit** SDKs, which are traditionally designed to only run single-file Python UI demos.
+
+### The Breakthrough
+**GradioSpaces removes this limitation entirely.** 
+
+By leveraging an unprivileged user-space OCI layer puller and a transparent FastAPI reverse proxy, this project acts as a **daemonless runner**: it pulls public Docker/OCI images, unpacks their rootfs, and executes their application processes natively inside a 100% free Hugging Face Gradio Space—no Docker daemon (`dockerd`) or container runtime required.
+
+---
+
+## 🧠 Gradio & HF Constraints: How We Solved Them
+
+| Hugging Face Constraint | Why It Happens | How We Solved It in `app.py` |
+| :--- | :--- | :--- |
+| **No Docker Daemon (`dockerd`)** | Free Spaces run inside locked-down, unprivileged Kubernetes pods without `/var/run/docker.sock`. Running `docker run` is impossible. | **Daemonless OCI v2 Puller:** Queries the Docker Hub / GHCR v2 registry API, downloads the `linux/amd64` layer blobs over HTTPS, and unpacks them directly into `/tmp/docker_rootfs` using pure Python `tarfile`. The application process is then executed natively via standard process execution without requiring `dockerd` or a container engine. |
+| **Gradio 5/6 SSR Process Crash** | Newer Gradio versions spawn an internal Node.js Server-Side Rendering (SSR) proxy that hangs or crashes in cloud containers (`Stopping Node.js server...`). | **SSR Bypass Monkeypatch:** Automatically patches `gr.Blocks.launch` at runtime to force `ssr_mode = False`. |
+| **ZeroGPU Supervisor Abort** | ZeroGPU environments verify that the space is an authentic GPU application during startup. If no `@spaces.GPU` decorator is detected in the AST, the container terminates. | **ZeroGPU AST Probe:** Injects a lightweight `@spaces.GPU` handler that satisfies the platform supervisor check. |
+| **Port 7860 Isolation** | Hugging Face exclusively exposes public traffic on port `7860`. Services listening on internal port `8080`, `3000`, etc. are inaccessible from outside. | **Transparent Reverse Proxy Middleware:** Intercepts traffic on port `7860` and forwards requests to `http://127.0.0.1:INTERNAL_PORT` using high-performance asynchronous `httpx`. |
+| **Prefix-Free URL Routing** | Gradio natively captures routes or throws 404 for arbitrary endpoints like `/test`, `/login`, or `/users`. | **HTTP 404 Fallback Proxy:** Any route that is not a Gradio internal asset (`/assets`, `/gradio_api`) is automatically forwarded to your application process untouched. Calling `{base_url}/test` hits `/test` directly on your backend service! |
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TD
+    subgraph Internet
+        User[External Client / Frontend]
+    end
+
+    subgraph HuggingFaceSpace ["Hugging Face Space (Free ZeroGPU Tier: 16GB RAM)"]
+        Ingress["HF Ingress Port :7860"]
+        
+        subgraph PythonSupervisor ["Python Supervisor (app.py)"]
+            FastAPI["FastAPI + Transparent Proxy Middleware"]
+            OCIPuller["OCI v2 Layer Puller"]
+            GradioUI["Gradio Logs Dashboard (/)"]
+        end
+
+        subgraph ContainerEnv ["Extracted Container Rootfs (/tmp/docker_rootfs)"]
+            AppProcess["Your Containerized Application Process\n(Go / Node.js / Rust / Python / C++)"]
+        end
+    end
+
+    subgraph Registries ["Public OCI Registry"]
+        DockerHub["Docker Hub / GHCR"]
+    end
+
+    User -->|GET /test, POST /api/data| Ingress
+    Ingress --> FastAPI
+    
+    FastAPI -->|If Gradio asset or /| GradioUI
+    FastAPI -->|All other routes: /test, /ping, /api/*| AppProcess
+    
+    OCIPuller -->|Startup: Download & extract layers| DockerHub
+    OCIPuller -.->|Unpack rootfs| ContainerEnv
+    AppProcess -.->|Listens on 127.0.0.1:8080| FastAPI
+```
+
+---
+
 ## 🛡️ Requirements File (`requirements.txt`)
 
 ```txt
@@ -213,16 +223,6 @@ httpx
 psutil
 spaces
 ```
-
----
-
-## 📜 Deployment Rules & Safety Guidelines
-
-Make sure to read the full [Rules & Guidelines (rules.md)](rules.md) before deploying your service:
-- **Free Account Eligibility (30-Day Rule):** Personal accounts must have a verified email and be older than 30 days to deploy free Gradio/ZeroGPU compute spaces.
-- **Avoid Platform Bans:** Why downloading external runtime tools/binaries at boot triggers automated account lockouts.
-- **Frontend / Browser Limitation:** Why Private Spaces require Bearer tokens and cannot be directly called from browser JavaScript (`fetch()`), and how to properly proxy private spaces through a backend.
-- **Content Policy:** Requirements for testing content moderation or NSFW filtering models safely.
 
 ---
 
