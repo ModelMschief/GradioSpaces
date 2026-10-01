@@ -10,7 +10,8 @@
 
 > [!IMPORTANT]
 > **Before deploying, please review the [Deployment Rules & Safety Guidelines](rules.md).**  
-> Learn how to prevent automated account lockouts, why external binary downloads are prohibited, and critical differences between **Public** vs. **Private** Spaces (including why Private Spaces cannot be called directly from frontend browsers).
+> - **Account Eligibility (30-Day Age Gate):** Hugging Face requires free personal accounts to have a **verified email and be older than 30 days** in good standing to create free Gradio/ZeroGPU compute spaces. Brand new accounts (< 30 days old) will be prompted for a paid plan.
+> - **Safety & Visibility Rules:** Avoid external binary downloads during boot to prevent automated lockouts, and understand critical differences between **Public** vs. **Private** Spaces (including why Private Spaces cannot be called directly from frontend browsers).
 
 ---
 
@@ -118,6 +119,10 @@ docker push your-username/my-docker-app:latest
 ---
 
 ### Step 2: Create a Free Hugging Face Space
+> [!IMPORTANT]
+> **Free Account Eligibility (30-Day Rule):**  
+> Hugging Face's official compute policy allows free personal accounts in good standing to host **up to 2 Gradio Spaces for free** on ZeroGPU, provided the account has a **verified email and is older than 30 days**. If your account is brand new (< 30 days old), the platform will ask you to subscribe to PRO ($9/month) before allowing compute Spaces to be created.
+
 1. Go to [Hugging Face Spaces](https://huggingface.co/new-space).
 2. Choose **Space SDK: Gradio**.
 3. Choose **Hardware: ZeroGPU (Free)** or **CPU Basic (Free 16GB RAM)**.
@@ -214,6 +219,7 @@ spaces
 ## 📜 Deployment Rules & Safety Guidelines
 
 Make sure to read the full [Rules & Guidelines (rules.md)](rules.md) before deploying your service:
+- **Free Account Eligibility (30-Day Rule):** Personal accounts must have a verified email and be older than 30 days to deploy free Gradio/ZeroGPU compute spaces.
 - **Avoid Platform Bans:** Why downloading external runtime tools/binaries at boot triggers automated account lockouts.
 - **Frontend / Browser Limitation:** Why Private Spaces require Bearer tokens and cannot be directly called from browser JavaScript (`fetch()`), and how to properly proxy private spaces through a backend.
 - **Content Policy:** Requirements for testing content moderation or NSFW filtering models safely.

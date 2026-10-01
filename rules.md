@@ -61,3 +61,13 @@ When a Space is set to **Private**:
 
 - Free Spaces automatically enter sleep mode after a period of inactivity.
 - Set up a free monitoring service (e.g. [UptimeRobot](https://uptimerobot.com) or [Better Stack](https://betterstack.com)) to ping your Space's `/ping` or health endpoint every 5 to 10 minutes to maintain persistent 24/7 uptime.
+
+---
+
+## 7. ⏳ Free Account Eligibility: The 30-Day Account Age Gate
+
+- **The Policy:** Hugging Face officially limits free compute space creation (Gradio / ZeroGPU) to personal accounts that have a **verified email and are older than 30 days** in good standing (capped at 2 Spaces).
+- **Brand New Accounts (< 30 days):** If an account was registered fewer than 30 days ago, Hugging Face gates compute creation behind a paid plan (**PRO at $9/month**). This measure was implemented to stop automated throwaway accounts from abusing free cloud compute.
+- **Recommendations:**
+  - If you have an existing personal account older than 30 days with a verified email, use that account to deploy for free.
+  - If your account is brand new, either wait until the account reaches 30 days of age, or upgrade to PRO to unlock immediate access.
