@@ -10,6 +10,7 @@
 
 > [!IMPORTANT]
 > **Before deploying, please review the [Deployment Rules & Safety Guidelines](rules.md).**  
+> - **Experimental Project:** This repository is **completely experimental** and built for educational and research prototyping. It is **not intended to bypass, circumvent, or exploit** any platform restrictions, billing tiers, or security mechanisms.
 > - **Account Eligibility (30-Day Age Gate):** Hugging Face requires free personal accounts to have a **verified email and be older than 30 days** in good standing to create free Gradio/ZeroGPU compute spaces. Brand new accounts (< 30 days old) will be prompted for a paid plan.
 > - **Safety & Visibility Rules:** Avoid external binary downloads during boot to prevent automated lockouts, and understand critical differences between **Public** vs. **Private** Spaces (including why Private Spaces cannot be called directly from frontend browsers).
 
@@ -223,6 +224,15 @@ httpx
 psutil
 spaces
 ```
+
+---
+
+## ⚖️ Disclaimer & Intended Use
+
+This repository is **strictly an experimental research project** developed for educational and software prototyping purposes:
+- **No Platform Evasion:** This tool is **not intended to bypass, circumvent, or exploit** platform billing, compute tiers, or security mechanisms. It executes application binaries strictly within unprivileged, standard user space.
+- **Compliance:** Users are solely responsible for ensuring their usage, workloads, and code comply with [Hugging Face's Terms of Service](https://huggingface.co/terms-of-service) and acceptable use guidelines.
+- **As-Is:** This software is provided "as is", without warranty of any kind.
 
 ---
 

@@ -2,6 +2,10 @@
 
 To prevent your Hugging Face Space from being paused, flagged as abusive, or locked out by automated Trust & Safety heuristics, follow these essential operational rules.
 
+> [!NOTE]
+> **Experimental Project Notice:**  
+> This project is strictly experimental for educational research into user-space process management. It is **not intended to bypass or circumvent platform protections, compute limits, or billing policies**.
+
 ---
 
 ## 1. 🚫 Never Download External Sandboxing/Evasion Binaries at Runtime
